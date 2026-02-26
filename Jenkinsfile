@@ -13,7 +13,22 @@ pipeline {
     }
 
     stages {
-
+      stage('Tests') {
+            parallel {
+                stage('Unit Tests') {
+                    steps {
+                        echo "Ejecutando Unit Tests"
+                        sh 'sleep 2'
+                    }
+                }
+                stage('Integration Tests') {
+                    steps {
+                        echo "Ejecutando Integration Tests"
+                        sh 'sleep 2'
+                    }
+                }
+            }
+        }
         stage('Hello world') {
             steps {
                 script { 
