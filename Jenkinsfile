@@ -12,21 +12,40 @@ pipeline {
         AKS_NAME = "aks-dev-eastus"
     }
 
-    stages {
-      stage('Tests') {
-            parallel {
-                stage('Unit Tests') {
-                    steps {
-                        echo "Ejecutando Unit Tests"
-                        sh 'sleep 2'
-                    }
-                }
-                stage('Integration Tests') {
-                    steps {
-                        echo "Ejecutando Integration Tests"
-                        sh 'sleep 2'
-                    }
-                }
+     stage('[CI] install dependencies') {
+            steps {
+                sh '''
+                  echo ">>> Instalando dependencias..."
+                  npm install
+                '''
+            }
+        }
+stages {
+        //ci instalar dependencias
+        stage('[CI] install dependencies') {
+            steps {
+                sh '''
+                  echo ">>> Instalando dependencias..."
+                  npm install
+                '''
+            }
+        }
+        //Ci ejecutar pruebas unitarias
+        stage('[CI] Unit tests') {
+            steps {
+                sh '''
+                  echo ">>> Ejecutando tests..."
+                  npm run test
+                '''
+            }
+        }
+        //ejecutar pruebas de integración
+        stage('[CI] Integration tests') {
+            steps {
+                sh '''
+                  echo ">>> Ejecutando pruebas de integración..."
+                  npm run test:integration
+                '''
             }
         }
         stage('Hello world') {
