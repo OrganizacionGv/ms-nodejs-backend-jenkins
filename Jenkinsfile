@@ -7,66 +7,65 @@ pipeline {
     }
 
     environment {
-        APELLIDO = "vallejo"
+
+        APELLIDO = "demo1"
+
         ACR_NAME = "acrglobalcicd"
         ACR_LOGIN_SERVER = "${ACR_NAME}.azurecr.io"
+
         IMAGE_NAME = "my-nodejs-app-${APELLIDO}"
+
         RESOURCE_GROUP = "rg-cicd-terraform-app-baraujox"
         AKS_NAME = "aks-dev-eastus"
+
         ENV = "dev"
         API_PROVIDER_URL = "https://dev.api.com"
+
     }
 
     stages {
 
+    // =====================
+    // CI
+    // =====================
+
         stage('[CI] install dependencies') {
+
             steps {
+
                 sh '''
-                echo ">>> Instalando dependencias..."
+
                 npm install
+
                 '''
+
             }
+
         }
+
 
         stage('[CI] Unit tests') {
+
             steps {
-                sh '''
-                echo ">>> Ejecutando tests..."
-                npm run test
-                '''
+
+                sh 'npm run test'
+
             }
+
         }
+
 
         stage('[CI] Integration tests') {
-            steps {
-                sh '''
-                echo ">>> Ejecutando pruebas integración..."
-                npm run test:integration
-                '''
-            }
-        }
 
-        stage('Hello world') {
             steps {
 
-                script {
-                    env.VARIABLE = "demo123"
-                }
+                sh 'npm run test:integration'
 
-                sh '''
-                echo "Hello world"
-                echo $VARIABLE
-                echo $APELLIDO
-                '''
-
-                sh '''
-                node -v
-                npm -v
-                docker --version
-                az version
-                '''
             }
+
         }
+
+
 
         stage('Azure Login') {
 
@@ -93,37 +92,26 @@ pipeline {
                     '''
 
                 }
-            }
-        }
-
-        stage('AKS Credentials') {
-
-            steps {
-
-                sh '''
-
-                az aks get-credentials \
-                --resource-group $RESOURCE_GROUP \
-                --name $AKS_NAME \
-                --overwrite-existing
-
-                '''
 
             }
+
         }
 
-        stage('[CI] Get Git Commit Short SHA') {
+
+
+        stage('[CI] Get Commit SHA') {
 
             steps {
 
                 script {
 
                     env.IMAGE_TAG = sh(
-                    script:'git rev-parse --short HEAD',
-                    returnStdout:true
-                    ).trim()
 
-                    echo "IMAGE_TAG ${env.IMAGE_TAG}"
+                        script:'git rev-parse --short HEAD',
+
+                        returnStdout:true
+
+                    ).trim()
 
                 }
 
@@ -131,7 +119,9 @@ pipeline {
 
         }
 
-        stage('[CI] Build & Push to ACR') {
+
+
+        stage('[CI] Build & Push Image') {
 
             steps {
 
@@ -151,27 +141,25 @@ pipeline {
 
         }
 
-        stage('[CD-DEV] Render k8s.yml') {
+
+    // =====================
+    // DEV DEPLOY
+    // =====================
+
+        stage('[CD-DEV] Deploy AKS') {
+
+            environment {
+
+                ENV="dev"
+                API_PROVIDER_URL="https://dev.api.com"
+
+            }
 
             steps {
 
                 sh '''
 
                 envsubst < k8s.yml > k8s-dev.yml
-
-                cat k8s-dev.yml
-
-                '''
-
-            }
-
-        }
-
-        stage('[CD-DEV] Deploy to AKS') {
-
-            steps {
-
-                sh '''
 
                 az aks command invoke \
                 --resource-group $RESOURCE_GROUP \
@@ -185,7 +173,15 @@ pipeline {
 
         }
 
+
+
         stage('[CD-DEV] Get LoadBalancer IP') {
+
+            environment {
+
+                ENV="dev"
+
+            }
 
             steps {
 
@@ -193,25 +189,18 @@ pipeline {
 
                 SERVICE_NAME="my-nodejs-service-${APELLIDO}-${ENV}"
 
-                LB_IP=""
-                MAX_RETRIES=5
-                RETRY_COUNT=0
+                echo "Esperando LoadBalancer..."
 
-                while [ -z "$LB_IP" ] && [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+                sleep 60
 
-                  LB_IP=$(kubectl get svc $SERVICE_NAME -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+                LB_IP=$(az aks command invoke \
+                --resource-group $RESOURCE_GROUP \
+                --name $AKS_NAME \
+                --command "kubectl get svc $SERVICE_NAME -o jsonpath='{.status.loadBalancer.ingress[0].ip}'" \
+                --query logs \
+                -o tsv)
 
-                  if [ -z "$LB_IP" ]; then
-                    RETRY_COUNT=$((RETRY_COUNT+1))
-                    echo "Esperando IP..."
-                    sleep 5
-                  fi
-
-                done
-
-                [ -z "$LB_IP" ] && exit 1
-
-                echo "LB IP -> $LB_IP"
+                echo "DEV LB IP -> $LB_IP"
 
                 '''
 
@@ -219,41 +208,46 @@ pipeline {
 
         }
 
-                // ======================
-        // QA APPROVAL
-        // ======================
+
+    // =====================
+    // QA APPROVAL
+    // =====================
 
         stage('Aprobación QA') {
+
             steps {
-                input message: '¿Aprobar despliegue a QA?', ok: 'Deploy QA'
+
+                input message:'¿Deploy QA?', ok:'Deploy QA'
+
             }
+
         }
 
 
-        // ======================
-        // CD QA DEPLOY
-        // ======================
+    // =====================
+    // QA DEPLOY
+    // =====================
 
-        stage('[CD-QA] Deploy to AKS') {
+        stage('[CD-QA] Deploy AKS') {
 
             environment {
-                ENV = "qa"
-                API_PROVIDER_URL = "https://qa.api.com"
+
+                ENV="qa"
+                API_PROVIDER_URL="https://qa.api.com"
+
             }
 
             steps {
 
                 sh '''
-
-                echo ">>> Renderizando YAML QA"
 
                 envsubst < k8s.yml > k8s-qa.yml
 
                 az aks command invoke \
-                  --resource-group $RESOURCE_GROUP \
-                  --name $AKS_NAME \
-                  --command "kubectl apply -f k8s-qa.yml" \
-                  --file k8s-qa.yml
+                --resource-group $RESOURCE_GROUP \
+                --name $AKS_NAME \
+                --command "kubectl apply -f k8s-qa.yml" \
+                --file k8s-qa.yml
 
                 '''
 
@@ -262,14 +256,13 @@ pipeline {
         }
 
 
-        // ======================
-        // QA LOAD BALANCER
-        // ======================
 
-        stage('[CD-QA] Imprimir IP del servicio') {
+        stage('[CD-QA] Imprimir IP') {
 
             environment {
+
                 ENV="qa"
+
             }
 
             steps {
@@ -278,26 +271,14 @@ pipeline {
 
                 SERVICE_NAME="my-nodejs-service-${APELLIDO}-${ENV}"
 
-                LB_IP=""
-                MAX_RETRIES=10
-                RETRY_COUNT=0
+                sleep 60
 
-                while [ -z "$LB_IP" ] && [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-
-                  LB_IP=$(kubectl get svc $SERVICE_NAME -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-
-                  if [ -z "$LB_IP" ]; then
-                    RETRY_COUNT=$((RETRY_COUNT+1))
-                    echo "Esperando IP QA..."
-                    sleep 8
-                  fi
-
-                done
-
-                if [ -z "$LB_IP" ]; then
-                    echo "No se obtuvo IP QA"
-                    exit 1
-                fi
+                LB_IP=$(az aks command invoke \
+                --resource-group $RESOURCE_GROUP \
+                --name $AKS_NAME \
+                --command "kubectl get svc $SERVICE_NAME -o jsonpath='{.status.loadBalancer.ingress[0].ip}'" \
+                --query logs \
+                -o tsv)
 
                 echo "QA LB IP -> $LB_IP"
 
@@ -308,27 +289,26 @@ pipeline {
         }
 
 
-
-        // ======================
-        // PROD APPROVAL
-        // ======================
+    // =====================
+    // PROD APPROVAL
+    // =====================
 
         stage('Aprobación PRD') {
 
             steps {
 
-                input message:'¿Aprobar despliegue a PRODUCCIÓN?', ok:'Deploy PRD'
+                input message:'¿Deploy PRODUCCIÓN?', ok:'Deploy PRD'
 
             }
 
         }
 
 
-        // ======================
-        // PROD DEPLOY
-        // ======================
+    // =====================
+    // PROD DEPLOY
+    // =====================
 
-        stage('[CD-PRD] Deploy a AKS') {
+        stage('[CD-PRD] Deploy AKS') {
 
             environment {
 
@@ -341,15 +321,13 @@ pipeline {
 
                 sh '''
 
-                echo ">>> Renderizando YAML PRD"
-
                 envsubst < k8s.yml > k8s-prd.yml
 
                 az aks command invoke \
-                  --resource-group $RESOURCE_GROUP \
-                  --name $AKS_NAME \
-                  --command "kubectl apply -f k8s-prd.yml" \
-                  --file k8s-prd.yml
+                --resource-group $RESOURCE_GROUP \
+                --name $AKS_NAME \
+                --command "kubectl apply -f k8s-prd.yml" \
+                --file k8s-prd.yml
 
                 '''
 
@@ -359,11 +337,7 @@ pipeline {
 
 
 
-        // ======================
-        // PROD IP
-        // ======================
-
-        stage('[CD-PRD] Imprimir IP del servicio') {
+        stage('[CD-PRD] Imprimir IP') {
 
             environment {
 
@@ -377,26 +351,14 @@ pipeline {
 
                 SERVICE_NAME="my-nodejs-service-${APELLIDO}-${ENV}"
 
-                LB_IP=""
-                MAX_RETRIES=15
-                RETRY_COUNT=0
+                sleep 90
 
-                while [ -z "$LB_IP" ] && [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-
-                  LB_IP=$(kubectl get svc $SERVICE_NAME -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-
-                  if [ -z "$LB_IP" ]; then
-                    RETRY_COUNT=$((RETRY_COUNT+1))
-                    echo "Esperando IP PRD..."
-                    sleep 10
-                  fi
-
-                done
-
-                if [ -z "$LB_IP" ]; then
-                    echo "No se obtuvo IP PRD"
-                    exit 1
-                fi
+                LB_IP=$(az aks command invoke \
+                --resource-group $RESOURCE_GROUP \
+                --name $AKS_NAME \
+                --command "kubectl get svc $SERVICE_NAME -o jsonpath='{.status.loadBalancer.ingress[0].ip}'" \
+                --query logs \
+                -o tsv)
 
                 echo "PRD LB IP -> $LB_IP"
 
