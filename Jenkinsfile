@@ -219,6 +219,193 @@ pipeline {
 
         }
 
+                // ======================
+        // QA APPROVAL
+        // ======================
+
+        stage('Aprobación QA') {
+            steps {
+                input message: '¿Aprobar despliegue a QA?', ok: 'Deploy QA'
+            }
+        }
+
+
+        // ======================
+        // CD QA DEPLOY
+        // ======================
+
+        stage('[CD-QA] Deploy to AKS') {
+
+            environment {
+                ENV = "qa"
+                API_PROVIDER_URL = "https://qa.api.com"
+            }
+
+            steps {
+
+                sh '''
+
+                echo ">>> Renderizando YAML QA"
+
+                envsubst < k8s.yml > k8s-qa.yml
+
+                az aks command invoke \
+                  --resource-group $RESOURCE_GROUP \
+                  --name $AKS_NAME \
+                  --command "kubectl apply -f k8s-qa.yml" \
+                  --file k8s-qa.yml
+
+                '''
+
+            }
+
+        }
+
+
+        // ======================
+        // QA LOAD BALANCER
+        // ======================
+
+        stage('[CD-QA] Imprimir IP del servicio') {
+
+            environment {
+                ENV="qa"
+            }
+
+            steps {
+
+                sh '''
+
+                SERVICE_NAME="my-nodejs-service-${APELLIDO}-${ENV}"
+
+                LB_IP=""
+                MAX_RETRIES=10
+                RETRY_COUNT=0
+
+                while [ -z "$LB_IP" ] && [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+
+                  LB_IP=$(kubectl get svc $SERVICE_NAME -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+
+                  if [ -z "$LB_IP" ]; then
+                    RETRY_COUNT=$((RETRY_COUNT+1))
+                    echo "Esperando IP QA..."
+                    sleep 8
+                  fi
+
+                done
+
+                if [ -z "$LB_IP" ]; then
+                    echo "No se obtuvo IP QA"
+                    exit 1
+                fi
+
+                echo "QA LB IP -> $LB_IP"
+
+                '''
+
+            }
+
+        }
+
+
+
+        // ======================
+        // PROD APPROVAL
+        // ======================
+
+        stage('Aprobación PRD') {
+
+            steps {
+
+                input message:'¿Aprobar despliegue a PRODUCCIÓN?', ok:'Deploy PRD'
+
+            }
+
+        }
+
+
+        // ======================
+        // PROD DEPLOY
+        // ======================
+
+        stage('[CD-PRD] Deploy a AKS') {
+
+            environment {
+
+                ENV="prd"
+                API_PROVIDER_URL="https://api.com"
+
+            }
+
+            steps {
+
+                sh '''
+
+                echo ">>> Renderizando YAML PRD"
+
+                envsubst < k8s.yml > k8s-prd.yml
+
+                az aks command invoke \
+                  --resource-group $RESOURCE_GROUP \
+                  --name $AKS_NAME \
+                  --command "kubectl apply -f k8s-prd.yml" \
+                  --file k8s-prd.yml
+
+                '''
+
+            }
+
+        }
+
+
+
+        // ======================
+        // PROD IP
+        // ======================
+
+        stage('[CD-PRD] Imprimir IP del servicio') {
+
+            environment {
+
+                ENV="prd"
+
+            }
+
+            steps {
+
+                sh '''
+
+                SERVICE_NAME="my-nodejs-service-${APELLIDO}-${ENV}"
+
+                LB_IP=""
+                MAX_RETRIES=15
+                RETRY_COUNT=0
+
+                while [ -z "$LB_IP" ] && [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+
+                  LB_IP=$(kubectl get svc $SERVICE_NAME -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+
+                  if [ -z "$LB_IP" ]; then
+                    RETRY_COUNT=$((RETRY_COUNT+1))
+                    echo "Esperando IP PRD..."
+                    sleep 10
+                  fi
+
+                done
+
+                if [ -z "$LB_IP" ]; then
+                    echo "No se obtuvo IP PRD"
+                    exit 1
+                fi
+
+                echo "PRD LB IP -> $LB_IP"
+
+                '''
+
+            }
+
+        }
+
     }
 
 }
