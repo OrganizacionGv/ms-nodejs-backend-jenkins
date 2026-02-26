@@ -12,7 +12,7 @@ image 'devops-agent:latest'
 
 environment {
 
-APELLIDO="demo1"
+APELLIDO="vallejomerchan"
 
 ACR_NAME="acrglobalcicd"
 ACR_LOGIN_SERVER="${ACR_NAME}.azurecr.io"
