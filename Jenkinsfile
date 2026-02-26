@@ -1,373 +1,408 @@
 pipeline {
 
-    agent {
-        docker {
-            image 'devops-agent:latest'
-        }
-    }
+agent {
 
-    environment {
+docker {
 
-        APELLIDO = "demo1"
+image 'devops-agent:latest'
 
-        ACR_NAME = "acrglobalcicd"
-        ACR_LOGIN_SERVER = "${ACR_NAME}.azurecr.io"
+}
 
-        IMAGE_NAME = "my-nodejs-app-${APELLIDO}"
+}
 
-        RESOURCE_GROUP = "rg-cicd-terraform-app-baraujox"
-        AKS_NAME = "aks-dev-eastus"
+environment {
 
-        ENV = "dev"
-        API_PROVIDER_URL = "https://dev.api.com"
+APELLIDO="demo1"
 
-    }
+ACR_NAME="acrglobalcicd"
+ACR_LOGIN_SERVER="${ACR_NAME}.azurecr.io"
 
-    stages {
+IMAGE_NAME="my-nodejs-app-${APELLIDO}"
 
-    // =====================
-    // CI
-    // =====================
+RESOURCE_GROUP="rg-cicd-terraform-app-baraujox"
+AKS_NAME="aks-dev-eastus"
 
-        stage('[CI] install dependencies') {
+}
 
-            steps {
+stages {
 
-                sh '''
 
-                npm install
+// ================= CI =================
 
-                '''
 
-            }
+stage('[CI] Install dependencies') {
 
-        }
+steps {
 
+sh 'npm install'
 
-        stage('[CI] Unit tests') {
+}
 
-            steps {
+}
 
-                sh 'npm run test'
 
-            }
+stage('[CI] Unit Tests') {
 
-        }
+steps {
 
+sh 'npm run test'
 
-        stage('[CI] Integration tests') {
+}
 
-            steps {
+}
 
-                sh 'npm run test:integration'
 
-            }
+stage('[CI] Integration Tests') {
 
-        }
+steps {
 
+sh 'npm run test:integration'
 
+}
 
-        stage('Azure Login') {
+}
 
-            steps {
 
-                withCredentials([
 
-                    string(credentialsId:'azure-clientId',variable:'AZ_CLIENT_ID'),
-                    string(credentialsId:'azure-clientSecret',variable:'AZ_CLIENT_SECRET'),
-                    string(credentialsId:'azure-tenantId',variable:'AZ_TENANT_ID'),
-                    string(credentialsId:'azure-subscriptionId',variable:'AZ_SUBSCRIPTION_ID')
+stage('Azure Login') {
 
-                ]) {
+steps {
 
-                    sh '''
+withCredentials([
 
-                    az login --service-principal \
-                     --username "$AZ_CLIENT_ID" \
-                     --password "$AZ_CLIENT_SECRET" \
-                     --tenant "$AZ_TENANT_ID"
+string(credentialsId:'azure-clientId',variable:'AZ_CLIENT_ID'),
+string(credentialsId:'azure-clientSecret',variable:'AZ_CLIENT_SECRET'),
+string(credentialsId:'azure-tenantId',variable:'AZ_TENANT_ID'),
+string(credentialsId:'azure-subscriptionId',variable:'AZ_SUBSCRIPTION_ID')
 
-                    az account set --subscription $AZ_SUBSCRIPTION_ID
+]) {
 
-                    '''
+sh '''
 
-                }
+az login --service-principal \
+--username "$AZ_CLIENT_ID" \
+--password "$AZ_CLIENT_SECRET" \
+--tenant "$AZ_TENANT_ID"
 
-            }
+az account set --subscription $AZ_SUBSCRIPTION_ID
 
-        }
+'''
 
+}
 
+}
 
-        stage('[CI] Get Commit SHA') {
+}
 
-            steps {
 
-                script {
 
-                    env.IMAGE_TAG = sh(
+stage('[CI] Git SHA') {
 
-                        script:'git rev-parse --short HEAD',
+steps {
 
-                        returnStdout:true
+script {
 
-                    ).trim()
+env.IMAGE_TAG=sh(
 
-                }
+script:'git rev-parse --short HEAD',
 
-            }
+returnStdout:true
 
-        }
+).trim()
 
+}
 
+}
 
-        stage('[CI] Build & Push Image') {
+}
 
-            steps {
 
-                sh '''
 
-                az acr login --name $ACR_NAME
+stage('[CI] Build Push ACR') {
 
-                docker build \
-                 -t $ACR_LOGIN_SERVER/$IMAGE_NAME:$IMAGE_TAG .
+steps {
 
-                docker push \
-                 $ACR_LOGIN_SERVER/$IMAGE_NAME:$IMAGE_TAG
+sh '''
 
-                '''
+az acr login --name $ACR_NAME
 
-            }
+docker build -t $ACR_LOGIN_SERVER/$IMAGE_NAME:$IMAGE_TAG .
 
-        }
+docker push $ACR_LOGIN_SERVER/$IMAGE_NAME:$IMAGE_TAG
 
+'''
 
-    // =====================
-    // DEV DEPLOY
-    // =====================
+}
 
-        stage('[CD-DEV] Deploy AKS') {
+}
 
-            environment {
 
-                ENV="dev"
-                API_PROVIDER_URL="https://dev.api.com"
 
-            }
+// ================= DEV =================
 
-            steps {
 
-                sh '''
+stage('[CD-DEV] Deploy') {
 
-                envsubst < k8s.yml > k8s-dev.yml
+environment {
 
-                az aks command invoke \
-                --resource-group $RESOURCE_GROUP \
-                --name $AKS_NAME \
-                --command "kubectl apply -f k8s-dev.yml" \
-                --file k8s-dev.yml
+ENV="dev"
+API_PROVIDER_URL="https://dev.api.com"
 
-                '''
+}
 
-            }
+steps {
 
-        }
+sh '''
 
+envsubst < k8s.yml > k8s-dev.yml
 
+az aks command invoke \
+--resource-group $RESOURCE_GROUP \
+--name $AKS_NAME \
+--command "kubectl apply -f k8s-dev.yml" \
+--file k8s-dev.yml
 
-        stage('[CD-DEV] Get LoadBalancer IP') {
+'''
 
-            environment {
+}
 
-                ENV="dev"
+}
 
-            }
 
-            steps {
 
-                sh '''
+stage('[CD-DEV] Get IP') {
 
-                SERVICE_NAME="my-nodejs-service-${APELLIDO}-${ENV}"
+environment { ENV="dev" }
 
-                echo "Esperando LoadBalancer..."
+steps {
 
-                sleep 60
+sh '''
 
-                LB_IP=$(az aks command invoke \
-                --resource-group $RESOURCE_GROUP \
-                --name $AKS_NAME \
-                --command "kubectl get svc $SERVICE_NAME -o jsonpath='{.status.loadBalancer.ingress[0].ip}'" \
-                --query logs \
-                -o tsv)
+SERVICE_NAME="my-nodejs-service-${APELLIDO}-${ENV}"
 
-                echo "DEV LB IP -> $LB_IP"
+echo "Esperando IP DEV..."
 
-                '''
+LB_IP=""
 
-            }
+MAX=30
+COUNT=0
 
-        }
+while [ -z "$LB_IP" ] && [ $COUNT -lt $MAX ]; do
 
+LB_IP=$(az aks command invoke \
+--resource-group $RESOURCE_GROUP \
+--name $AKS_NAME \
+--command "kubectl get svc $SERVICE_NAME -o jsonpath='{.status.loadBalancer.ingress[0].ip}'" \
+--query logs -o tsv | tr -d '\\r')
 
-    // =====================
-    // QA APPROVAL
-    // =====================
+if [ -z "$LB_IP" ]; then
 
-        stage('Aprobación QA') {
+COUNT=$((COUNT+1))
 
-            steps {
+echo "Intento $COUNT/$MAX..."
 
-                input message:'¿Deploy QA?', ok:'Deploy QA'
+sleep 15
 
-            }
+fi
 
-        }
+done
 
+[ -z "$LB_IP" ] && exit 1
 
-    // =====================
-    // QA DEPLOY
-    // =====================
+echo "DEV LB IP -> $LB_IP"
 
-        stage('[CD-QA] Deploy AKS') {
+'''
 
-            environment {
+}
 
-                ENV="qa"
-                API_PROVIDER_URL="https://qa.api.com"
+}
 
-            }
 
-            steps {
 
-                sh '''
+// ================= QA =================
 
-                envsubst < k8s.yml > k8s-qa.yml
 
-                az aks command invoke \
-                --resource-group $RESOURCE_GROUP \
-                --name $AKS_NAME \
-                --command "kubectl apply -f k8s-qa.yml" \
-                --file k8s-qa.yml
+stage('Aprobación QA') {
 
-                '''
+steps {
 
-            }
+input message:'Deploy QA?', ok:'Deploy QA'
 
-        }
+}
 
+}
 
 
-        stage('[CD-QA] Imprimir IP') {
 
-            environment {
+stage('[CD-QA] Deploy') {
 
-                ENV="qa"
+environment {
 
-            }
+ENV="qa"
+API_PROVIDER_URL="https://qa.api.com"
 
-            steps {
+}
 
-                sh '''
+steps {
 
-                SERVICE_NAME="my-nodejs-service-${APELLIDO}-${ENV}"
+sh '''
 
-                sleep 60
+envsubst < k8s.yml > k8s-qa.yml
 
-                LB_IP=$(az aks command invoke \
-                --resource-group $RESOURCE_GROUP \
-                --name $AKS_NAME \
-                --command "kubectl get svc $SERVICE_NAME -o jsonpath='{.status.loadBalancer.ingress[0].ip}'" \
-                --query logs \
-                -o tsv)
+az aks command invoke \
+--resource-group $RESOURCE_GROUP \
+--name $AKS_NAME \
+--command "kubectl apply -f k8s-qa.yml" \
+--file k8s-qa.yml
 
-                echo "QA LB IP -> $LB_IP"
+'''
 
-                '''
+}
 
-            }
+}
 
-        }
 
 
-    // =====================
-    // PROD APPROVAL
-    // =====================
+stage('[CD-QA] Get IP') {
 
-        stage('Aprobación PRD') {
+environment { ENV="qa" }
 
-            steps {
+steps {
 
-                input message:'¿Deploy PRODUCCIÓN?', ok:'Deploy PRD'
+sh '''
 
-            }
+SERVICE_NAME="my-nodejs-service-${APELLIDO}-${ENV}"
 
-        }
+echo "Esperando IP QA..."
 
+LB_IP=""
 
-    // =====================
-    // PROD DEPLOY
-    // =====================
+MAX=35
+COUNT=0
 
-        stage('[CD-PRD] Deploy AKS') {
+while [ -z "$LB_IP" ] && [ $COUNT -lt $MAX ]; do
 
-            environment {
+LB_IP=$(az aks command invoke \
+--resource-group $RESOURCE_GROUP \
+--name $AKS_NAME \
+--command "kubectl get svc $SERVICE_NAME -o jsonpath='{.status.loadBalancer.ingress[0].ip}'" \
+--query logs -o tsv | tr -d '\\r')
 
-                ENV="prd"
-                API_PROVIDER_URL="https://api.com"
+if [ -z "$LB_IP" ]; then
 
-            }
+COUNT=$((COUNT+1))
 
-            steps {
+echo "Intento $COUNT/$MAX..."
 
-                sh '''
+sleep 15
 
-                envsubst < k8s.yml > k8s-prd.yml
+fi
 
-                az aks command invoke \
-                --resource-group $RESOURCE_GROUP \
-                --name $AKS_NAME \
-                --command "kubectl apply -f k8s-prd.yml" \
-                --file k8s-prd.yml
+done
 
-                '''
+[ -z "$LB_IP" ] && exit 1
 
-            }
+echo "QA LB IP -> $LB_IP"
 
-        }
+'''
 
+}
 
+}
 
-        stage('[CD-PRD] Imprimir IP') {
 
-            environment {
 
-                ENV="prd"
+// ================= PRD =================
 
-            }
 
-            steps {
+stage('Aprobación PRD') {
 
-                sh '''
+steps {
 
-                SERVICE_NAME="my-nodejs-service-${APELLIDO}-${ENV}"
+input message:'Deploy PRODUCCIÓN?', ok:'Deploy PRD'
 
-                sleep 90
+}
 
-                LB_IP=$(az aks command invoke \
-                --resource-group $RESOURCE_GROUP \
-                --name $AKS_NAME \
-                --command "kubectl get svc $SERVICE_NAME -o jsonpath='{.status.loadBalancer.ingress[0].ip}'" \
-                --query logs \
-                -o tsv)
+}
 
-                echo "PRD LB IP -> $LB_IP"
 
-                '''
 
-            }
+stage('[CD-PRD] Deploy') {
 
-        }
+environment {
 
-    }
+ENV="prd"
+API_PROVIDER_URL="https://api.com"
+
+}
+
+steps {
+
+sh '''
+
+envsubst < k8s.yml > k8s-prd.yml
+
+az aks command invoke \
+--resource-group $RESOURCE_GROUP \
+--name $AKS_NAME \
+--command "kubectl apply -f k8s-prd.yml" \
+--file k8s-prd.yml
+
+'''
+
+}
+
+}
+
+
+
+stage('[CD-PRD] Get IP') {
+
+environment { ENV="prd" }
+
+steps {
+
+sh '''
+
+SERVICE_NAME="my-nodejs-service-${APELLIDO}-${ENV}"
+
+echo "Esperando IP PRD..."
+
+LB_IP=""
+
+MAX=40
+COUNT=0
+
+while [ -z "$LB_IP" ] && [ $COUNT -lt $MAX ]; do
+
+LB_IP=$(az aks command invoke \
+--resource-group $RESOURCE_GROUP \
+--name $AKS_NAME \
+--command "kubectl get svc $SERVICE_NAME -o jsonpath='{.status.loadBalancer.ingress[0].ip}'" \
+--query logs -o tsv | tr -d '\\r')
+
+if [ -z "$LB_IP" ]; then
+
+COUNT=$((COUNT+1))
+
+echo "Intento $COUNT/$MAX..."
+
+sleep 20
+
+fi
+
+done
+
+[ -z "$LB_IP" ] && exit 1
+
+echo "PRD LB IP -> $LB_IP"
+
+'''
+
+}
+
+}
+
+}
 
 }
